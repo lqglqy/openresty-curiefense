@@ -1,0 +1,10 @@
+FROM harbor.dosec.cn/library/ubuntu:21.10-apt
+LABEL maintainer=Dosec
+ARG DEBIAN_FRONTEND=noninteractive
+
+RUN sed -i "s@http://.*archive.ubuntu.com@http://old-releases.ubuntu.com@g" /etc/apt/sources.list \
+&& sed -i "s@http://.*security.ubuntu.com@http://old-releases.ubuntu.com@g" /etc/apt/sources.list \
+&& apt-get update && apt-get install -y libpcre3-dev libssl-dev perl make build-essential curl
+
+CMD ["/bin/bash"]
+# docker run -itd -v /root/.ssh:/root/.ssh -v /:/host -v ${PWD}:/openresty --privileged --net host --pid host --rm --name openresty-build openresty-build:latest 

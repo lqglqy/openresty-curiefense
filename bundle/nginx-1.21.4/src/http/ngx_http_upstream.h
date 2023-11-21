@@ -142,6 +142,7 @@ typedef struct {
     ngx_http_complex_value_t        *value;
 #if (NGX_HAVE_TRANSPARENT_PROXY)
     ngx_uint_t                       transparent; /* unsigned  transparent:1; */
+    ngx_uint_t                       mark; /* socket mark */
 #endif
 } ngx_http_upstream_local_t;
 

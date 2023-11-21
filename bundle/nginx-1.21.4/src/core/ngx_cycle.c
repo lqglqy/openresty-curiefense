@@ -34,6 +34,25 @@ ngx_uint_t             ngx_quiet_mode;
 static ngx_connection_t  dumb;
 /* STUB */
 
+static void
+ngx_set_net_namespace(ngx_cycle_t *cycle, char *ns)
+{
+    if (!ns) {
+        ngx_log_error(NGX_LOG_ALERT, cycle->log, 0, "ns NULL");
+        return;
+    }
+    int fd = open(ns, O_RDONLY | O_CLOEXEC);
+    if (-1 == fd) {
+        ngx_log_error(NGX_LOG_ALERT, cycle->log, 0, "open (%s) failed", ns);
+        return;
+    }
+
+    if (-1 == setns(fd, 0)) {
+        ngx_log_error(NGX_LOG_ALERT, cycle->log, 0, "setns (%d) failed", fd);
+    }
+
+    return;
+}
 
 ngx_cycle_t *
 ngx_init_cycle(ngx_cycle_t *old_cycle)
@@ -499,6 +518,7 @@ ngx_init_cycle(ngx_cycle_t *old_cycle)
         continue;
     }
 
+    ngx_set_net_namespace(cycle, ccf->ns);
 
     /* handle the listening sockets */
 

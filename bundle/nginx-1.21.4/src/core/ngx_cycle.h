@@ -133,6 +133,7 @@ typedef struct {
     char                    **environment;
 
     ngx_uint_t                transparent;  /* unsigned  transparent:1; */
+    char                    *ns;
 } ngx_core_conf_t;
 
 

@@ -15,6 +15,7 @@ typedef struct {
     ngx_stream_complex_value_t      *value;
 #if (NGX_HAVE_TRANSPARENT_PROXY)
     ngx_uint_t                       transparent; /* unsigned  transparent:1; */
+    ngx_uint_t                       mark; /* unsigned  mark; */
 #endif
 } ngx_stream_upstream_local_t;
 
@@ -666,6 +667,7 @@ ngx_stream_proxy_set_local(ngx_stream_session_t *s, ngx_stream_upstream_t *u,
 
 #if (NGX_HAVE_TRANSPARENT_PROXY)
     u->peer.transparent = local->transparent;
+    u->peer.mark = local->mark;
 #endif
 
     if (local->value == NULL) {

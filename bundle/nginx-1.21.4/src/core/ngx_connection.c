@@ -563,6 +563,34 @@ ngx_open_listening_sockets(ngx_cycle_t *cycle)
             }
 #endif
 
+#if defined(IP_TRANSPARENT)
+        int mark = 1333;
+        if (setsockopt(s, SOL_SOCKET, SO_MARK, &mark, sizeof(mark)) == -1) {
+            ngx_log_error(NGX_LOG_ALERT, log, ngx_socket_errno,
+                            "setsockopt(SO_MARK) failed");
+            return NGX_ERROR;
+        }
+        int value;
+        if (setsockopt(s, IPPROTO_IP, IP_TRANSPARENT,
+                       (const void *) &value, sizeof(int)) == -1)
+        {
+            ngx_log_error(NGX_LOG_ALERT, log, ngx_socket_errno,
+                          "setsockopt(IP_TRANSPARENT) failed");
+            return NGX_ERROR;
+        }
+
+#elif defined(IP_BINDANY)
+
+        if (setsockopt(s, IPPROTO_IP, IP_BINDANY,
+                       (const void *) &value, sizeof(int)) == -1)
+        {
+            ngx_log_error(NGX_LOG_ALERT, log, ngx_socket_errno,
+                          "setsockopt(IP_BINDANY) failed");
+            return NGX_ERROR;
+        }
+
+#endif
+
 #if (NGX_HAVE_INET6 && defined IPV6_V6ONLY)
 
             if (ls[i].sockaddr->sa_family == AF_INET6) {
@@ -578,6 +606,29 @@ ngx_open_listening_sockets(ngx_cycle_t *cycle)
                                   "setsockopt(IPV6_V6ONLY) %V failed, ignored",
                                   &ls[i].addr_text);
                 }
+#if defined(IP_TRANSPARENT)
+                int value;
+                if (setsockopt(s, IPPROTO_IP, IP_TRANSPARENT,
+                            (const void *) &value, sizeof(int)) == -1)
+                {
+                    ngx_log_error(NGX_LOG_ALERT, log, ngx_socket_errno,
+                                "setsockopt(IP_TRANSPARENT) failed");
+                    return NGX_ERROR;
+                }
+
+#elif defined(IP_BINDANY)
+
+                if (setsockopt(s, IPPROTO_IP, IP_BINDANY,
+                            (const void *) &value, sizeof(int)) == -1)
+                {
+                    ngx_log_error(NGX_LOG_ALERT, log, ngx_socket_errno,
+                                "setsockopt(IP_BINDANY) failed");
+                    return NGX_ERROR;
+                }
+
+#endif
+
+
             }
 #endif
             /* TODO: close on exit */

@@ -1,0 +1,38 @@
+ngx_addon_name=ngx_http_curiefense_module
+
+srcs="$ngx_addon_dir/ngx_http_curiefense_module.c \
+      $ngx_addon_dir/ngx_http_curiefense_rewrite.c \
+      $ngx_addon_dir/ngx_http_curiefense_pre_access.c"
+ngx_http_curiefense_module_inc_path="$ngx_addon_dir $ngx_http_lua_inc_path "
+
+deps="$ngx_addon_dir/curiefense_ffi.h \
+      $ngx_addon_dir/ddebug.h \
+      $ngx_addon_dir/ngx_http_curiefense_common.h"
+
+lib_path=$ngx_addon_dir
+#ngx_http_curiefense_module_libs=" -L ${lib_path} -Wl,-Bstatic -lcuriefense_engine -Wl,-Bdynamic "
+ngx_http_curiefense_module_libs=" -L ${lib_path} -lcuriefense_ffi -lhs -lstdc++ -lm -lc"
+
+
+if test -n "$ngx_module_link"; then
+      ngx_module_type=HTTP
+      ngx_module_name=$ngx_addon_name
+      ngx_module_deps=$deps
+      ngx_module_incs=$ngx_http_curiefense_module_inc_path
+      ngx_module_srcs=$srcs
+      ngx_module_libs=$ngx_http_curiefense_module_libs
+
+      # Let ngx_http_access_module initialize before this module,
+      # so that this module can take effect after ngx_http_access_module,
+      # because the initialization order and the effective order are reversed.
+      ngx_module_order="${ngx_addon_name} ngx_http_access_module"
+
+      . auto/module
+else
+    ngx_module_libs=$ngx_http_curiefense_module_libs
+    HTTP_MODULES="$HTTP_MODULES ${ngx_addon_name}"
+    HTTP_DEPS-"$HTTP_DEPS $deps"
+    HTTP_INCS="$HTTP_INCS -I $ngx_addon_dir"
+    NGX_ADDON_SRCS="$NGX_ADDON_SRCS $srcs"
+fi
+

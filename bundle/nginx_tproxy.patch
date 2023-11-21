@@ -1,0 +1,322 @@
+diff -uNr nginx-1.21.4/src/core/nginx.c nginx-1.21.4.mod/src/core/nginx.c
+--- nginx-1.21.4/src/core/nginx.c	2023-11-13 19:34:53.791707370 +0800
++++ nginx-1.21.4.mod/src/core/nginx.c	2023-11-13 19:34:37.512427550 +0800
+@@ -19,6 +19,7 @@
+ static void *ngx_core_module_create_conf(ngx_cycle_t *cycle);
+ static char *ngx_core_module_init_conf(ngx_cycle_t *cycle, void *conf);
+ static char *ngx_set_user(ngx_conf_t *cf, ngx_command_t *cmd, void *conf);
++static char *ngx_set_ns(ngx_conf_t *cf, ngx_command_t *cmd, void *conf);
+ static char *ngx_set_env(ngx_conf_t *cf, ngx_command_t *cmd, void *conf);
+ static char *ngx_set_priority(ngx_conf_t *cf, ngx_command_t *cmd, void *conf);
+ static char *ngx_set_cpu_affinity(ngx_conf_t *cf, ngx_command_t *cmd,
+@@ -95,6 +96,13 @@
+       0,
+       0,
+       NULL },
++      
++    { ngx_string("ns"),
++      NGX_MAIN_CONF|NGX_DIRECT_CONF|NGX_CONF_TAKE1,
++      ngx_set_ns,
++      0,
++      0,
++      NULL },
+ 
+     { ngx_string("worker_priority"),
+       NGX_MAIN_CONF|NGX_DIRECT_CONF|NGX_CONF_TAKE1,
+@@ -1218,6 +1226,18 @@
+     return NGX_CONF_OK;
+ }
+ 
++static char *
++ngx_set_ns(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
++{
++    ngx_core_conf_t  *ccf = conf;
++    ngx_str_t        *value;
++
++    value = cf->args->elts;
++
++    ccf->ns = (char *) value[1].data;
++    return NGX_CONF_OK;
++}
++
+ 
+ static char *
+ ngx_set_user(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
+diff -uNr nginx-1.21.4/src/core/ngx_connection.c nginx-1.21.4.mod/src/core/ngx_connection.c
+--- nginx-1.21.4/src/core/ngx_connection.c	2023-11-13 19:34:53.791707370 +0800
++++ nginx-1.21.4.mod/src/core/ngx_connection.c	2023-11-13 19:34:37.510427515 +0800
+@@ -563,6 +563,34 @@
+             }
+ #endif
+ 
++#if defined(IP_TRANSPARENT)
++        int mark = 1333;
++        if (setsockopt(s, SOL_SOCKET, SO_MARK, &mark, sizeof(mark)) == -1) {
++            ngx_log_error(NGX_LOG_ALERT, log, ngx_socket_errno,
++                            "setsockopt(SO_MARK) failed");
++            return NGX_ERROR;
++        }
++        int value;
++        if (setsockopt(s, IPPROTO_IP, IP_TRANSPARENT,
++                       (const void *) &value, sizeof(int)) == -1)
++        {
++            ngx_log_error(NGX_LOG_ALERT, log, ngx_socket_errno,
++                          "setsockopt(IP_TRANSPARENT) failed");
++            return NGX_ERROR;
++        }
++
++#elif defined(IP_BINDANY)
++
++        if (setsockopt(s, IPPROTO_IP, IP_BINDANY,
++                       (const void *) &value, sizeof(int)) == -1)
++        {
++            ngx_log_error(NGX_LOG_ALERT, log, ngx_socket_errno,
++                          "setsockopt(IP_BINDANY) failed");
++            return NGX_ERROR;
++        }
++
++#endif
++
+ #if (NGX_HAVE_INET6 && defined IPV6_V6ONLY)
+ 
+             if (ls[i].sockaddr->sa_family == AF_INET6) {
+@@ -578,6 +606,29 @@
+                                   "setsockopt(IPV6_V6ONLY) %V failed, ignored",
+                                   &ls[i].addr_text);
+                 }
++#if defined(IP_TRANSPARENT)
++                int value;
++                if (setsockopt(s, IPPROTO_IP, IP_TRANSPARENT,
++                            (const void *) &value, sizeof(int)) == -1)
++                {
++                    ngx_log_error(NGX_LOG_ALERT, log, ngx_socket_errno,
++                                "setsockopt(IP_TRANSPARENT) failed");
++                    return NGX_ERROR;
++                }
++
++#elif defined(IP_BINDANY)
++
++                if (setsockopt(s, IPPROTO_IP, IP_BINDANY,
++                            (const void *) &value, sizeof(int)) == -1)
++                {
++                    ngx_log_error(NGX_LOG_ALERT, log, ngx_socket_errno,
++                                "setsockopt(IP_BINDANY) failed");
++                    return NGX_ERROR;
++                }
++
++#endif
++
++
+             }
+ #endif
+             /* TODO: close on exit */
+diff -uNr nginx-1.21.4/src/core/ngx_cycle.c nginx-1.21.4.mod/src/core/ngx_cycle.c
+--- nginx-1.21.4/src/core/ngx_cycle.c	2023-11-13 19:34:53.792707387 +0800
++++ nginx-1.21.4.mod/src/core/ngx_cycle.c	2023-11-13 19:34:37.498427309 +0800
+@@ -34,6 +34,25 @@
+ static ngx_connection_t  dumb;
+ /* STUB */
+ 
++static void
++ngx_set_net_namespace(ngx_cycle_t *cycle, char *ns)
++{
++    if (!ns) {
++        ngx_log_error(NGX_LOG_ALERT, cycle->log, 0, "ns NULL");
++        return;
++    }
++    int fd = open(ns, O_RDONLY | O_CLOEXEC);
++    if (-1 == fd) {
++        ngx_log_error(NGX_LOG_ALERT, cycle->log, 0, "open (%s) failed", ns);
++        return;
++    }
++
++    if (-1 == setns(fd, 0)) {
++        ngx_log_error(NGX_LOG_ALERT, cycle->log, 0, "setns (%d) failed", fd);
++    }
++
++    return;
++}
+ 
+ ngx_cycle_t *
+ ngx_init_cycle(ngx_cycle_t *old_cycle)
+@@ -499,6 +518,7 @@
+         continue;
+     }
+ 
++    ngx_set_net_namespace(cycle, ccf->ns);
+ 
+     /* handle the listening sockets */
+ 
+diff -uNr nginx-1.21.4/src/core/ngx_cycle.h nginx-1.21.4.mod/src/core/ngx_cycle.h
+--- nginx-1.21.4/src/core/ngx_cycle.h	2023-11-13 19:34:53.792707387 +0800
++++ nginx-1.21.4.mod/src/core/ngx_cycle.h	2023-11-13 19:34:37.505427429 +0800
+@@ -133,6 +133,7 @@
+     char                    **environment;
+ 
+     ngx_uint_t                transparent;  /* unsigned  transparent:1; */
++    char                    *ns;
+ } ngx_core_conf_t;
+ 
+ 
+diff -uNr nginx-1.21.4/src/event/ngx_event_connect.c nginx-1.21.4.mod/src/event/ngx_event_connect.c
+--- nginx-1.21.4/src/event/ngx_event_connect.c	2023-11-13 19:34:53.793707404 +0800
++++ nginx-1.21.4.mod/src/event/ngx_event_connect.c	2023-11-13 19:34:37.520427687 +0800
+@@ -14,6 +14,8 @@
+ #if (NGX_HAVE_TRANSPARENT_PROXY)
+ static ngx_int_t ngx_event_connect_set_transparent(ngx_peer_connection_t *pc,
+     ngx_socket_t s);
++static ngx_int_t ngx_event_connect_set_mark(ngx_peer_connection_t *pc,
++    ngx_socket_t s);
+ #endif
+ 
+ 
+@@ -116,6 +118,11 @@
+                 goto failed;
+             }
+         }
++        if (pc->mark > 0) {
++            if (ngx_event_connect_set_mark(pc, s) != NGX_OK) {
++                goto failed;
++            }
++        }
+ #endif
+ 
+ #if (NGX_HAVE_IP_BIND_ADDRESS_NO_PORT || NGX_LINUX)
+@@ -348,6 +355,19 @@
+ #if (NGX_HAVE_TRANSPARENT_PROXY)
+ 
+ static ngx_int_t
++ngx_event_connect_set_mark(ngx_peer_connection_t *pc, ngx_socket_t s)
++{
++    int mark = pc->mark;
++    if (setsockopt(s, SOL_SOCKET, SO_MARK, &mark, sizeof(mark)) == -1) {
++        ngx_log_error(NGX_LOG_ALERT, pc->log, ngx_socket_errno,
++                      "setsockopt(SO_MARK) failed");
++        return NGX_ERROR;
++    }
++
++    return NGX_OK;
++}
++
++static ngx_int_t
+ ngx_event_connect_set_transparent(ngx_peer_connection_t *pc, ngx_socket_t s)
+ {
+     int  value;
+diff -uNr nginx-1.21.4/src/event/ngx_event_connect.h nginx-1.21.4.mod/src/event/ngx_event_connect.h
+--- nginx-1.21.4/src/event/ngx_event_connect.h	2023-11-13 19:34:53.793707404 +0800
++++ nginx-1.21.4.mod/src/event/ngx_event_connect.h	2023-11-13 19:34:37.523427739 +0800
+@@ -60,6 +60,7 @@
+ 
+     ngx_log_t                       *log;
+ 
++    unsigned                         mark;
+     unsigned                         cached:1;
+     unsigned                         transparent:1;
+     unsigned                         so_keepalive:1;
+diff -uNr nginx-1.21.4/src/http/modules/ngx_http_proxy_module.c nginx-1.21.4.mod/src/http/modules/ngx_http_proxy_module.c
+--- nginx-1.21.4/src/http/modules/ngx_http_proxy_module.c	2023-11-13 19:34:53.794707421 +0800
++++ nginx-1.21.4.mod/src/http/modules/ngx_http_proxy_module.c	2023-11-13 19:34:37.464426724 +0800
+@@ -365,7 +365,7 @@
+       NULL },
+ 
+     { ngx_string("proxy_bind"),
+-      NGX_HTTP_MAIN_CONF|NGX_HTTP_SRV_CONF|NGX_HTTP_LOC_CONF|NGX_CONF_TAKE12,
++      NGX_HTTP_MAIN_CONF|NGX_HTTP_SRV_CONF|NGX_HTTP_LOC_CONF|NGX_CONF_TAKE123,
+       ngx_http_upstream_bind_set_slot,
+       NGX_HTTP_LOC_CONF_OFFSET,
+       offsetof(ngx_http_proxy_loc_conf_t, upstream.local),
+diff -uNr nginx-1.21.4/src/http/ngx_http_upstream.c nginx-1.21.4.mod/src/http/ngx_http_upstream.c
+--- nginx-1.21.4/src/http/ngx_http_upstream.c	2023-11-13 19:34:53.795707439 +0800
++++ nginx-1.21.4.mod/src/http/ngx_http_upstream.c	2023-11-13 19:34:37.458426621 +0800
+@@ -6293,6 +6293,15 @@
+             return NGX_CONF_ERROR;
+         }
+     }
++    if (cf->args->nelts > 3) {
++#if (NGX_HAVE_TRANSPARENT_PROXY)
++        local->mark = ngx_atoi(value[3].data, value[3].len);
++#else
++        ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,
++                            "transparent proxying is not supported "
++                            "on this platform, ignored");
++#endif
++    }
+ 
+     return NGX_CONF_OK;
+ }
+@@ -6313,6 +6322,7 @@
+ 
+ #if (NGX_HAVE_TRANSPARENT_PROXY)
+     u->peer.transparent = local->transparent;
++    u->peer.mark = local->mark;
+ #endif
+ 
+     if (local->value == NULL) {
+diff -uNr nginx-1.21.4/src/http/ngx_http_upstream.h nginx-1.21.4.mod/src/http/ngx_http_upstream.h
+--- nginx-1.21.4/src/http/ngx_http_upstream.h	2023-11-13 19:34:53.796707456 +0800
++++ nginx-1.21.4.mod/src/http/ngx_http_upstream.h	2023-11-13 19:34:37.460426656 +0800
+@@ -142,6 +142,7 @@
+     ngx_http_complex_value_t        *value;
+ #if (NGX_HAVE_TRANSPARENT_PROXY)
+     ngx_uint_t                       transparent; /* unsigned  transparent:1; */
++    ngx_uint_t                       mark; /* socket mark */
+ #endif
+ } ngx_http_upstream_local_t;
+ 
+diff -uNr nginx-1.21.4/src/os/unix/ngx_process_cycle.c nginx-1.21.4.mod/src/os/unix/ngx_process_cycle.c
+--- nginx-1.21.4/src/os/unix/ngx_process_cycle.c	2023-11-13 19:34:53.796707456 +0800
++++ nginx-1.21.4.mod/src/os/unix/ngx_process_cycle.c	2023-11-13 19:34:37.543428083 +0800
+@@ -819,6 +819,25 @@
+     }
+ }
+ 
++static void
++ngx_set_net_namespace(ngx_cycle_t *cycle, char *ns)
++{
++    if (!ns) {
++        ngx_log_error(NGX_LOG_ALERT, cycle->log, 0, "ns NULL");
++        return;
++    }
++    int fd = open(ns, O_RDONLY | O_CLOEXEC);
++    if (-1 == fd) {
++        ngx_log_error(NGX_LOG_ALERT, cycle->log, 0, "open (%s) failed", ns);
++        return;
++    }
++
++    if (-1 == setns(fd, 0)) {
++        ngx_log_error(NGX_LOG_ALERT, cycle->log, 0, "setns (%d) failed", fd);
++    }
++
++    return;
++}
+ 
+ static void
+ ngx_worker_process_init(ngx_cycle_t *cycle, ngx_int_t worker)
+@@ -963,6 +982,8 @@
+     tp = ngx_timeofday();
+     srandom(((unsigned) ngx_pid << 16) ^ tp->sec ^ tp->msec);
+ 
++    ngx_set_net_namespace(cycle, ccf->ns);
++
+     /*
+      * disable deleting previous events for the listening sockets because
+      * in the worker processes there are no events at all at this point
+diff -uNr nginx-1.21.4/src/stream/ngx_stream_proxy_module.c nginx-1.21.4.mod/src/stream/ngx_stream_proxy_module.c
+--- nginx-1.21.4/src/stream/ngx_stream_proxy_module.c	2023-11-13 19:34:53.797707473 +0800
++++ nginx-1.21.4.mod/src/stream/ngx_stream_proxy_module.c	2023-11-13 19:34:37.489427154 +0800
+@@ -15,6 +15,7 @@
+     ngx_stream_complex_value_t      *value;
+ #if (NGX_HAVE_TRANSPARENT_PROXY)
+     ngx_uint_t                       transparent; /* unsigned  transparent:1; */
++    ngx_uint_t                       mark; /* unsigned  mark; */
+ #endif
+ } ngx_stream_upstream_local_t;
+ 
+@@ -666,6 +667,7 @@
+ 
+ #if (NGX_HAVE_TRANSPARENT_PROXY)
+     u->peer.transparent = local->transparent;
++    u->peer.mark = local->mark;
+ #endif
+ 
+     if (local->value == NULL) {

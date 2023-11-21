@@ -14,6 +14,8 @@
 #if (NGX_HAVE_TRANSPARENT_PROXY)
 static ngx_int_t ngx_event_connect_set_transparent(ngx_peer_connection_t *pc,
     ngx_socket_t s);
+static ngx_int_t ngx_event_connect_set_mark(ngx_peer_connection_t *pc,
+    ngx_socket_t s);
 #endif
 
 
@@ -113,6 +115,11 @@ ngx_event_connect_peer(ngx_peer_connection_t *pc)
 #if (NGX_HAVE_TRANSPARENT_PROXY)
         if (pc->transparent) {
             if (ngx_event_connect_set_transparent(pc, s) != NGX_OK) {
+                goto failed;
+            }
+        }
+        if (pc->mark > 0) {
+            if (ngx_event_connect_set_mark(pc, s) != NGX_OK) {
                 goto failed;
             }
         }
@@ -346,6 +353,19 @@ failed:
 
 
 #if (NGX_HAVE_TRANSPARENT_PROXY)
+
+static ngx_int_t
+ngx_event_connect_set_mark(ngx_peer_connection_t *pc, ngx_socket_t s)
+{
+    int mark = pc->mark;
+    if (setsockopt(s, SOL_SOCKET, SO_MARK, &mark, sizeof(mark)) == -1) {
+        ngx_log_error(NGX_LOG_ALERT, pc->log, ngx_socket_errno,
+                      "setsockopt(SO_MARK) failed");
+        return NGX_ERROR;
+    }
+
+    return NGX_OK;
+}
 
 static ngx_int_t
 ngx_event_connect_set_transparent(ngx_peer_connection_t *pc, ngx_socket_t s)

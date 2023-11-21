@@ -60,6 +60,7 @@ struct ngx_peer_connection_s {
 
     ngx_log_t                       *log;
 
+    unsigned                         mark;
     unsigned                         cached:1;
     unsigned                         transparent:1;
     unsigned                         so_keepalive:1;

@@ -19,6 +19,7 @@ static ngx_int_t ngx_save_argv(ngx_cycle_t *cycle, int argc, char *const *argv);
 static void *ngx_core_module_create_conf(ngx_cycle_t *cycle);
 static char *ngx_core_module_init_conf(ngx_cycle_t *cycle, void *conf);
 static char *ngx_set_user(ngx_conf_t *cf, ngx_command_t *cmd, void *conf);
+static char *ngx_set_ns(ngx_conf_t *cf, ngx_command_t *cmd, void *conf);
 static char *ngx_set_env(ngx_conf_t *cf, ngx_command_t *cmd, void *conf);
 static char *ngx_set_priority(ngx_conf_t *cf, ngx_command_t *cmd, void *conf);
 static char *ngx_set_cpu_affinity(ngx_conf_t *cf, ngx_command_t *cmd,
@@ -92,6 +93,13 @@ static ngx_command_t  ngx_core_commands[] = {
     { ngx_string("user"),
       NGX_MAIN_CONF|NGX_DIRECT_CONF|NGX_CONF_TAKE12,
       ngx_set_user,
+      0,
+      0,
+      NULL },
+      
+    { ngx_string("ns"),
+      NGX_MAIN_CONF|NGX_DIRECT_CONF|NGX_CONF_TAKE1,
+      ngx_set_ns,
       0,
       0,
       NULL },
@@ -1215,6 +1223,18 @@ ngx_core_module_init_conf(ngx_cycle_t *cycle, void *conf)
 
 #endif
 
+    return NGX_CONF_OK;
+}
+
+static char *
+ngx_set_ns(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
+{
+    ngx_core_conf_t  *ccf = conf;
+    ngx_str_t        *value;
+
+    value = cf->args->elts;
+
+    ccf->ns = (char *) value[1].data;
     return NGX_CONF_OK;
 }
 

@@ -6293,6 +6293,15 @@ ngx_http_upstream_bind_set_slot(ngx_conf_t *cf, ngx_command_t *cmd,
             return NGX_CONF_ERROR;
         }
     }
+    if (cf->args->nelts > 3) {
+#if (NGX_HAVE_TRANSPARENT_PROXY)
+        local->mark = ngx_atoi(value[3].data, value[3].len);
+#else
+        ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,
+                            "transparent proxying is not supported "
+                            "on this platform, ignored");
+#endif
+    }
 
     return NGX_CONF_OK;
 }
@@ -6313,6 +6322,7 @@ ngx_http_upstream_set_local(ngx_http_request_t *r, ngx_http_upstream_t *u,
 
 #if (NGX_HAVE_TRANSPARENT_PROXY)
     u->peer.transparent = local->transparent;
+    u->peer.mark = local->mark;
 #endif
 
     if (local->value == NULL) {

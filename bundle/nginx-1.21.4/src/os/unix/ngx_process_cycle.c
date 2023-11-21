@@ -819,6 +819,25 @@ ngx_worker_process_cycle(ngx_cycle_t *cycle, void *data)
     }
 }
 
+static void
+ngx_set_net_namespace(ngx_cycle_t *cycle, char *ns)
+{
+    if (!ns) {
+        ngx_log_error(NGX_LOG_ALERT, cycle->log, 0, "ns NULL");
+        return;
+    }
+    int fd = open(ns, O_RDONLY | O_CLOEXEC);
+    if (-1 == fd) {
+        ngx_log_error(NGX_LOG_ALERT, cycle->log, 0, "open (%s) failed", ns);
+        return;
+    }
+
+    if (-1 == setns(fd, 0)) {
+        ngx_log_error(NGX_LOG_ALERT, cycle->log, 0, "setns (%d) failed", fd);
+    }
+
+    return;
+}
 
 static void
 ngx_worker_process_init(ngx_cycle_t *cycle, ngx_int_t worker)
@@ -962,6 +981,8 @@ ngx_worker_process_init(ngx_cycle_t *cycle, ngx_int_t worker)
 
     tp = ngx_timeofday();
     srandom(((unsigned) ngx_pid << 16) ^ tp->sec ^ tp->msec);
+
+    ngx_set_net_namespace(cycle, ccf->ns);
 
     /*
      * disable deleting previous events for the listening sockets because
