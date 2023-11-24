@@ -2,6 +2,7 @@
 #include <ngx_config.h>
 #include <ngx_core.h>
 #include <ngx_http.h>
+#include <ngx_http_lua_api.h>
 
 #ifndef CURIEFENSE_DDEBUG
 #define CURIEFENSE_DDEBUG 1
@@ -139,6 +140,26 @@ static char *ngx_http_curiefense_merge_loc_conf(ngx_conf_t *cf, void *parent, vo
     return NGX_CONF_OK;
 }
 
+int ngx_http_curiefense_ffi_get_log(ngx_http_request_t *r, ngx_http_lua_ffi_str_t *out)
+{
+    ngx_http_curiefense_ctx_t *ctx;
+    if (!r || !out) {
+        ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "param error");
+        return -1;
+    }
+
+    ctx = ngx_http_get_module_ctx(r, ngx_http_curiefense_module);
+    if (!ctx) {
+        ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "ctx is null");
+        return -2;
+    }
+
+    out->data = ctx->attack_log.data;
+    out->len = ctx->attack_log.len;
+
+    return out->len;
+}
+
 static ngx_int_t ngx_http_curiefense_init(ngx_conf_t *cf) {
     ngx_http_core_main_conf_t *cmcf;
     ngx_http_handler_pt       *h;
@@ -156,6 +177,7 @@ static ngx_int_t ngx_http_curiefense_init(ngx_conf_t *cf) {
         return NGX_ERROR;
     }
     *h = ngx_http_curiefense_pre_access_handler;
+
 
     return NGX_OK;
 }

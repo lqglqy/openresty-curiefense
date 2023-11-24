@@ -7,8 +7,11 @@
 
 #include "curiefense_ffi.h"
 
+#define CF_ATTACK_LOG_MAX_LEN (4*1024)
+
 typedef struct {
     struct CFStreamHandle *cf_transaction;
+    ngx_str_t attack_log;
     unsigned waiting_more_body:1;
     unsigned body_requested:1;
 } ngx_http_curiefense_ctx_t;

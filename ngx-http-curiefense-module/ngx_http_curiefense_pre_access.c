@@ -24,6 +24,195 @@ ngx_http_curiefense_request_read(ngx_http_request_t *r)
     }
 }
 
+ngx_int_t
+ngx_http_curiefense_get_raw_request_b64(ngx_http_request_t *r, ngx_int_t max_len, ngx_str_t *b64)
+{
+    u_char *buf, *p, *cur;
+    ngx_int_t left;
+    if (max_len <= 0) 
+        return 0;
+    
+    buf= ngx_palloc(r->pool, max_len);
+    if (!buf) {
+        ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "failed to alloc");
+        return 0;
+    }
+
+    // request line
+    left = max_len;
+    p = cur = buf;
+    p = ngx_snprintf(cur, left, "%V\r\n", &r->request_line);
+
+    left -= (p - cur);
+    cur = p;
+
+    // headers
+    ngx_list_part_t *part = &r->headers_in.headers.part;
+    ngx_table_elt_t *data = part->elts;
+    ngx_uint_t i = 0;
+    for (i = 0 ; /* void */ ; i++) {
+        if (i >= part->nelts) {
+            if (part->next == NULL) {
+                break;
+            }
+
+            part = part->next;
+            data = part->elts;
+            i = 0;
+        }
+        p = ngx_snprintf(cur, left, "%V:%V\r\n", &data[i].key, &data[i].value);
+        left -= (p - cur);
+        cur = p;
+        if (left <= 0) {
+            break;
+        }
+    }
+
+
+    // body
+    if (left > 0) {
+        p = ngx_snprintf(cur, left, "\r\n");
+        left -= (p - cur);
+        cur = p;
+        ngx_chain_t *chain = r->request_body->bufs;
+
+        /**
+         * TODO: Speed up the analysis by sending chunk while they arrive.
+         *
+         * Notice that we are waiting for the full request body to
+         * start to process it, it may not be necessary. We may send
+         * the chunks to curiefense while nginx keep calling this
+         * function.
+         */
+
+        if (r->request_body->temp_file != NULL) {
+            ngx_str_t file_path = r->request_body->temp_file->file.name;
+            const char *file_name = ngx_str_to_char(file_path, r->pool);
+            if (file_name == (char*)-1) {
+                return NGX_HTTP_INTERNAL_SERVER_ERROR;
+            }
+            /*
+             * Request body was saved to a file, probably we don't have a
+             * copy of it in memory.
+             */
+            dd("request body inspection: file -- %s", file_name);
+
+            // TODO: logging file
+
+        } else {
+            dd("logging request body in memory.");
+        }
+
+        while (chain)
+        {
+            u_char *data = chain->buf->pos;
+            //p = ngx_snprintf(cur, left, "%.*s", , data);
+            int len = (int)(chain->buf->last - data);
+            if (len > left) 
+                len = left;
+            ngx_memcpy(cur, data, len);
+
+            left -= len;
+            cur += len;
+            if (chain->buf->last_buf || left <= 0) {
+                break;
+            }
+            chain = chain->next;
+
+        } 
+        p = cur;
+    }
+
+    ngx_str_t src;
+    src.data = buf;
+    src.len = p - buf;
+    // base64 encode
+    b64->len = ngx_base64_encoded_length(src.len);
+    b64->data = ngx_palloc(r->pool, b64->len);
+    if (b64->data == NULL) {
+        ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "failed to alloc, 0x00000001");
+        return 0;
+    }
+    
+    ngx_encode_base64(b64, &src);
+    return b64->len;
+}
+
+ngx_int_t
+ngx_http_curiefense_attack_log(ngx_http_request_t *r, 
+                            ngx_http_curiefense_ctx_t *ctx, 
+                            dpi_curiefense_match_log_t *ml,
+                            char *logstr)
+{
+    u_char *buf, *p, *cur;
+    ngx_int_t left;
+    ngx_str_t                 local_addr;
+    u_char                    addr[NGX_SOCKADDR_STRLEN];
+
+    ngx_http_curiefense_loc_conf_t *ccf;
+
+    ccf = ngx_http_get_module_loc_conf(r, ngx_http_curiefense_module);
+    if (ccf == NULL) {
+        dd("Curiefense not config... returning");
+        return NGX_DECLINED;
+    }
+
+    buf = ngx_palloc(r->pool, CF_ATTACK_LOG_MAX_LEN);
+    if (!buf) {
+        ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "failed to alloc");
+        return NGX_ERROR;
+    }
+
+    // dest ip
+    local_addr.len = NGX_SOCKADDR_STRLEN;
+    local_addr.data = addr;
+    if (ngx_connection_local_sockaddr(r->connection, &local_addr, 0) != NGX_OK) {
+        snprintf((char *)addr, sizeof(addr), "N/A");
+        local_addr.len = 3;
+    }
+    int client_port = ngx_inet_get_port(r->connection->sockaddr);
+    int server_port = ngx_inet_get_port(r->connection->local_sockaddr);
+
+    left = CF_ATTACK_LOG_MAX_LEN - 1;
+    p = cur = buf;
+    p = ngx_snprintf(cur, left, "{"
+		"\"timestamp\": %l,"
+		"\"sip\": \"%V\","
+		"\"sport\": \"%d\","
+		"\"dip\": \"%V\","
+		"\"dport\": \"%d\","
+		"\"sid\": \"%V\"," // service id
+		"\"rid\": \"%d\"," // rule id
+		"\"rll\": \"%d\"," // risk level
+		"\"act\": \"%d\"," // action
+		"\"cat\": \"%s\"," // categroy
+		"\"adc\": \"%s\",", // attack desc
+		ngx_time(),
+        &r->connection->addr_text,
+        client_port,
+        &local_addr,
+        server_port,
+        &ccf->curiefense_authority,
+        ml->rule_id,
+        ml->risk_level,
+        ml->action,
+        ml->category,
+        logstr
+	);
+    left -= (p - cur);
+	cur = p;
+
+    ngx_str_t req_b64;
+    ngx_int_t blen = ngx_http_curiefense_get_raw_request_b64(r, left, &req_b64);
+    if (blen > 0){
+        p = ngx_snprintf(cur, left, "\"rrt\": \"%V\"}", &req_b64); // raw request
+    }
+
+    ctx->attack_log.data = buf;
+    ctx->attack_log.len = p - buf;
+
+    return NGX_OK;
+}
 
 ngx_int_t
 ngx_http_curiefense_pre_access_handler(ngx_http_request_t *r)
@@ -188,16 +377,18 @@ ngx_http_curiefense_pre_access_handler(ngx_http_request_t *r)
 
         uintptr_t len = 0;
         dpi_curiefense_match_log_t m;
+        m.action = 0;
         
         char *logstr = curiefense_cfr_log_dosec(out, &len, &m.action, &m.rule_id, &m.risk_level, m.category);
         
-        //if (logstr && (m.action == CF_ACTION_BLOCK || m.action == CF_ACTION_MONITOR)) {
-        if (logstr) {
+        if (logstr && (m.action == CF_ACTION_BLOCK || m.action == CF_ACTION_MONITOR)) {
+        //if (logstr) {
             // TODO: send log to agent by udp
-            ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "cfr_log:%s, action: %d, rule_id: %u, risk_level: %d, category: %s\n", 
+            ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "cfr_log:%s, action: %d, rule_id: %d, risk_level: %d, category: %s\n", 
                                                logstr, m.action, m.rule_id, m.risk_level, m.category);
-            dd("cfr_log:%s, action: %d, rule_id: %u, risk_level: %d, category: %s\n", 
+            dd("cfr_log:%s, action: %d, rule_id: %d, risk_level: %d, category: %s\n", 
                                                logstr, m.action, m.rule_id, m.risk_level, m.category);
+            ngx_http_curiefense_attack_log(r, ctx, &m, logstr);
             curiefense_str_free(logstr);
         }
         if (m.action == CF_ACTION_BLOCK) {
